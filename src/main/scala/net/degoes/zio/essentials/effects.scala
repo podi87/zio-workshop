@@ -3,7 +3,36 @@
 package net.degoes.zio
 package essentials
 
+import net.degoes.zio.essentials.effects.Console.ReadLine
+import net.degoes.zio.essentials.effects.Console.Return
+import net.degoes.zio.essentials.effects.Console.WriteLine
+
 object effects {
+
+  // Functional-Programming is about programming with values
+
+  object prelude {
+    def println(line: String): Unit = ()
+
+    def readLine(): String = ""
+
+    sealed trait Console[A]
+
+    object Console {
+      final case class WriteLine[A](line: String, next: () => Console[A]) extends Console[A]
+      final case class ReadLine[A](next: String => Console[A]) extends Console[A]
+      final case class Return[A](value: A) extends Console[A]
+    }
+  }
+    
+//    val myConsoleProgram: Console[String] =
+//      WriteLine("Whats your name?",
+//        () => ReadLine(input =>
+//          WriteLine ("hello $input, good to meet you!",
+//          () => Return(input)
+//          )
+//        )
+//      )
 
   /**
    * `Console` is an immutable data structure that describes a console program

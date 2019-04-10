@@ -3,9 +3,13 @@
 package net.degoes.zio
 package applications
 
+import java.io.IOException
+import java.net.URL
+
 import scalaz.zio._
 import scalaz.zio.blocking.Blocking
-import scalaz.zio.console.{ putStrLn, Console }
+import scalaz.zio.console.Console
+import scalaz.zio.console.putStrLn
 import scalaz.zio.duration.Duration
 import scalaz.zio.random.Random
 
@@ -17,10 +21,14 @@ object circuit_breaker extends App {
   trait CircuitBreaker {}
 
   object CircuitBreaker {
+
     sealed trait State
-    final case class Closed(maxFailure: Int)                      extends State
+
+    final case class Closed(maxFailure: Int) extends State
+
     final case class Open(startAt: Duration, openUntil: Duration) extends State
-    final case class HalfOpen(retryUntil: Duration)               extends State
+
+    final case class HalfOpen(retryUntil: Duration) extends State
 
   }
 
@@ -32,7 +40,15 @@ object hangman extends App {
   /**
    * Create a hangman game that requires the capability to perform `Console` and `Random` effects.
    */
-  def myGame: ZIO[Console with Random, Nothing, Unit] = ???
+  def myGame: ZIO[Random with Console, IOException, Unit] =
+    for {
+      _ <- putStrLn("Welcome to zio hangman")
+      name <- getName
+      word <- chooseWord
+      state = State(name, Set.empty[Char], word)
+      _ <- renderState(state)
+      _ <- gameLoop(state)
+    } yield ()
 
   case class State(name: String, guesses: Set[Char], word: String) {
     def failures: Int = (guesses -- word.toSet).size
@@ -42,16 +58,30 @@ object hangman extends App {
     def playerWon: Boolean = (word.toSet -- guesses).isEmpty
   }
 
-  def gameLoop(state: State): ZIO[Console, Nothing, State] = ???
+  def gameLoop(state0: State): ZIO[Console, IOException, Unit] =
+    for {
+      char <- getChoice
+      state <- ZIO.succeed(state0.copy(guesses = state0.guesses + char))
+      _ <- renderState(state)
+      cont <- if (state.playerLost) putStrLn("sorrry loser").const(false)
+      else if (state.playerWon) putStrLn(s"Congrat, ${state.name} won the game").const(false)
+      else {
+        if (state == state0) putStrLn("Nice try, but you have already guessed this char").const(false)
+        else if (state.word.contains(char)) putStrLn("Good boy, you guessed a letter").const(false)
+        else putStrLn("uh oh its incorrect")
+      }.const(true)
+      _ <- if (cont) gameLoop(state) else ZIO.unit
+    } yield ()
+
 
   def renderState(state: State): ZIO[Console, Nothing, Unit] = {
 
     /**
      *
-     *  f     n  c  t  o
+     * f     n  c  t  o
      *  -  -  -  -  -  -  -
      *
-     *  Guesses: a, z, y, x
+     * Guesses: a, z, y, x
      *
      */
     val word =
@@ -66,11 +96,17 @@ object hangman extends App {
     putStrLn(text)
   }
 
-  def getChoice: ZIO[Console, Nothing, Char] = ???
+  def getChoice: ZIO[Console, IOException, Char] =
+    console.getStrLn.map(_.toLowerCase.trim.toList).flatMap {
+      case char :: Nil if char.isLetter => ZIO.succeed(char)
+      case _ => putStrLn("no letters") *> getChoice
+    }
 
-  def getName: ZIO[Console, Nothing, String] = ???
+  def getName: ZIO[Console, IOException, String] =
+    putStrLn("Please enter your name:") *> console.getStrLn
 
-  def chooseWord: ZIO[Random, Nothing, String] = ???
+  def chooseWord: ZIO[Random, Nothing, String] =
+    random.nextInt(Dictionary.length).map(index => Dictionary.lift(index).getOrElse("defect"))
 
   val Dictionary = List(
     "aaron",
@@ -948,23 +984,100 @@ object hangman extends App {
     "youtube"
   )
 
+//  def runScenario[E](testData: TestData): IO[IOException, TestData] =
+//    for {
+//      ref <- Ref.make(testData)
+//      module <- ZIO.succeed(TestModule(ref))
+//      _ <- myGame.provide(module)
+//      testData <- ref.get
+//    } yield testData
+//
+//
+//  case class TestData(
+//                       output: List[String],
+//                       input: List[String],
+//                       integers: List[Int]
+//                     )
+//
+//  case class TestModule(ref: Ref[TestData]) extends Random with Console {
+//    val console = new Console.Service[Any] {
+//      val getStrln: IO[IOException, String] =
+//        ref.modify(data => (data.input.head, data.copy(input = data.input.tail)))
+//      override def putStr(line: String): ZIO[Any, Nothing, Unit] =
+//        ref.update(data => data.copy(output = line :: data.output)).void
+//      override def putStrLn(line: String): ZIO[Any, Nothing, Unit] = putStr(line + "\n")
+//      override val getStrLn: ZIO[Any, IOException, String] = ???
+//    }
+//
+//    val random = new Random.Service[Any] {
+//      override val nextBoolean: ZIO[Any, Nothing, Boolean] = _
+//      override def nextBytes(length: Int): ZIO[Any, Nothing, Chunk[Byte]] = ???
+//      override val nextDouble: ZIO[Any, Nothing, Double] = _
+//      override val nextFloat: ZIO[Any, Nothing, Float] = _
+//      override val nextGaussian: ZIO[Any, Nothing, Double] = _
+//      override def nextInt(n: Int): ZIO[Any, Nothing, Int] = ???
+//      override val nextInt: ZIO[Any, Nothing, Int] = _
+//      override val nextLong: ZIO[Any, Nothing, FiberId] = _
+//      override val nextPrintableChar: ZIO[Any, Nothing, Char] = _
+//      override def nextString(length: Int): ZIO[Any, Nothing, String] = ???
+//    }
+//  }
+
+
   /**
-   *  Instantiate the polymorphic game to the `IO[Nothing, ?]` type.
-   *  by providing `Console`and `Random`
+   * Instantiate the polymorphic game to the `IO[Nothing, ?]` type.
+   * by providing `Console`and `Random`
    */
-  val myGameIO: UIO[Unit] = myGame ?
+  //  lazy val myGameIO: UIO[Unit] = myGame ?
 
   /**
    * Create a test data structure that can contain a buffer of lines (to be
    * read from the console), a log of output (that has been written to the
    * console), and a list of "random" numbers.
    */
-  override def run(args: List[String]): ZIO[Environment, Nothing, Int] = ???
+  override def run(args: List[String]): ZIO[Environment, Nothing, Int] =
+    myGame.fold(_ => 1, _ => 0)
 }
 
 object parallel_web_crawler {
 
-  final case class URL private (parsed: io.lemonlabs.uri.Url) {
+  case class CrawlState[E](visited: Set[URL], errors: List[E]) {
+    def visitAll(urls: Set[URL]): CrawlState[E] = copy(visited = visited ++ urls)
+    def log(e: E): CrawlState[E] = copy(errors = e :: errors)
+  }
+
+  def crawl[E](
+                seeds: Set[URL],
+                router: URL => Set[URL],
+                processor: (URL, String) => IO[E, Unit]
+              ): ZIO[Blocking, Nothing, List[E]] = {
+    def loop(ref: Ref[CrawlState[E]], seeds: Set[URL]): ZIO[Blocking, Nothing, Unit] =
+      ZIO.foreachParN(100)(seeds) { seed =>
+          getURL(seed).foldM(
+            _ => ZIO.succeed(Set()),
+            html => {
+              for {
+                newSeeds <- ref.modify { crawlState =>
+                  val newURLS = extractURLs(seed, html).toSet
+                  (newURLS -- crawlState.visited, crawlState.visitAll(newURLS))
+                }
+                _ <- processor(seed, html).catchAll(err => ref.update(_.log(err)).void)
+              } yield newSeeds
+            }
+          )
+      }.flatMap(list =>
+        loop(ref, list.toSet.flatten)
+      )
+
+    for {
+      ref <- Ref.make(CrawlState[E](seeds, Nil))
+      _ <- loop(ref, seeds)
+      state <- ref.get
+    } yield state.errors
+  }
+
+  final case class URL private(parsed: io.lemonlabs.uri.Url) {
+
     import io.lemonlabs.uri._
 
     final def relative(page: String): Option[URL] =
@@ -982,18 +1095,19 @@ object parallel_web_crawler {
 
     override def equals(a: Any): Boolean = a match {
       case that: URL => this.url == that.url
-      case _         => false
+      case _ => false
     }
 
     override def hashCode: Int = url.hashCode
   }
 
   object URL {
+
     import io.lemonlabs.uri._
 
     def apply(url: String): Option[URL] =
       scala.util.Try(AbsoluteUrl.parse(url)).toOption match {
-        case None         => None
+        case None => None
         case Some(parsed) => Some(new URL(parsed))
       }
   }
@@ -1013,7 +1127,7 @@ object parallel_web_crawler {
         val matches = (for (m <- pattern.findAllMatchIn(html)) yield m.group(1)).toList
 
         for {
-          m   <- matches
+          m <- matches
           url <- URL(m).toList ++ root.relative(m).toList
         } yield url
       })
@@ -1021,17 +1135,17 @@ object parallel_web_crawler {
   }
 
   object test {
-    val Home          = URL("http://scalaz.org").get
-    val Index         = URL("http://scalaz.org/index.html").get
+    val Home = URL("http://scalaz.org").get
+    val Index = URL("http://scalaz.org/index.html").get
     val ScaladocIndex = URL("http://scalaz.org/scaladoc/index.html").get
-    val About         = URL("http://scalaz.org/about").get
+    val About = URL("http://scalaz.org/about").get
 
     val SiteIndex =
       Map(
-        Home          -> """<html><body><a href="index.html">Home</a><a href="/scaladoc/index.html">Scaladocs</a></body></html>""",
-        Index         -> """<html><body><a href="index.html">Home</a><a href="/scaladoc/index.html">Scaladocs</a></body></html>""",
+        Home -> """<html><body><a href="index.html">Home</a><a href="/scaladoc/index.html">Scaladocs</a></body></html>""",
+        Index -> """<html><body><a href="index.html">Home</a><a href="/scaladoc/index.html">Scaladocs</a></body></html>""",
         ScaladocIndex -> """<html><body><a href="index.html">Home</a><a href="/about">About</a></body></html>""",
-        About         -> """<html><body><a href="home.html">Home</a><a href="http://google.com">Google</a></body></html>"""
+        About -> """<html><body><a href="home.html">Home</a><a href="http://google.com">Google</a></body></html>"""
       )
 
     val getURL: URL => IO[Exception, String] =
